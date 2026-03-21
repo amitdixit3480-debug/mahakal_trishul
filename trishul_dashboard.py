@@ -3,7 +3,6 @@ import sqlite3
 import pandas as pd
 import glob
 import os
-
 # 1. पेज सेटअप (Wide Layout)
 st.set_page_config(page_title="Mahakal Time Cycle", layout="wide")
 
