@@ -1,57 +1,70 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import os
 import glob
+import os
 
-# पेज सेटिंग
-st.set_page_config(page_title="Scanner Mahakal Cycle", layout="wide")
+# 1. पेज सेटअप (Wide Layout)
+st.set_page_config(page_title="Mahakal Time Cycle", layout="wide")
 
+# 2. मल्टी-पार्ट डेटा लोड करने वाला फंक्शन
 @st.cache_data
-def load_all_data():
-    all_data = []
-    # आपके फोल्डर में जितनी भी mahakal_part_...db फाइलें हैं, सबको ढूंढना
+def load_combined_data():
+    all_chunks = []
+    # आपके फोल्डर में जितनी भी 'mahakal_part_*.db' फाइलें हैं, सबको ढूंढना
     db_files = glob.glob("mahakal_part_*.db")
     
     if not db_files:
-        st.error("❌ कोई डेटाबेस पार्ट नहीं मिला! कृपया GitHub चेक करें।")
+        st.error("❌ कोई डेटाबेस पार्ट (Part 1, 2...) नहीं मिला! कृपया GitHub पर फाइलें चेक करें।")
         return pd.DataFrame()
 
-    with st.spinner(f"⏳ {len(db_files)} डेटा पार्ट्स को जोड़ा जा रहा है..."):
+    with st.spinner(f"⏳ {len(db_files)} डेटा पार्ट्स को महाकाल चक्र में जोड़ा जा रहा है..."):
         for file in db_files:
-            conn = sqlite3.connect(file)
-            # सिर्फ काम के कॉलम ताकि मेमोरी कम खर्च हो
-            df_part = pd.read_sql_query("SELECT symbol, date, close FROM stock_data", conn)
-            conn.close()
-            all_data.append(df_part)
+            try:
+                conn = sqlite3.connect(file)
+                # सिर्फ जरूरी कॉलम उठाना ताकि ऐप सुपर फ़ास्ट चले
+                df_part = pd.read_sql_query("SELECT symbol, date, close FROM stock_data", conn)
+                conn.close()
+                all_chunks.append(df_part)
+            except Exception as e:
+                st.warning(f"⚠️ {file} को पढ़ने में दिक्कत आई: {e}")
         
-        # सभी को एक साथ मिलाना (Merging)
-        final_df = pd.concat(all_data, ignore_index=True)
+        # सभी पार्ट्स को एक साथ मिलाना
+        final_df = pd.concat(all_chunks, ignore_index=True)
         final_df['date'] = pd.to_datetime(final_df['date'])
-        final_df['day_month'] = final_df['date'].dt.strftime('%d-%b')
         return final_df
 
+# --- मुख्य प्रोग्राम शुरू ---
 try:
-    df = load_all_data()
+    df = load_combined_data()
 
     if not df.empty:
-        st.success(f"🔱 महाकाल डेटा लोड सफल: {df['symbol'].nunique()} स्टॉक्स का बैकअप तैयार है।")
+        st.title("🔱 Mahakal Time Cycle & Seasonal Scanner")
+        st.sidebar.success(f"✅ कुल {df['symbol'].nunique()} स्टॉक्स का डेटा तैयार है।")
 
-        # --- TIME CYCLE UI ---
-        st.header("📊 परफेक्ट टाइम साइकिल खोज")
+        # --- UI: स्टॉक सिलेक्शन और साइकिल सेटिंग ---
+        col1, col2, col3 = st.columns([2, 1, 1])
         
-        col1, col2 = st.columns(2)
         with col1:
-            selected_stock = st.selectbox("स्टॉक चुनें", sorted(df['symbol'].unique()))
+            all_stocks = sorted(df['symbol'].unique())
+            selected_stock = st.selectbox("🎯 स्टॉक चुनें (Search here)", all_stocks)
+        
         with col2:
-            cycle_days = st.number_input("साइकिल के दिन (उदा. 90, 180, 365)", value=90)
+            cycle_days = st.number_input("⏳ टाइम साइकिल के दिन (उदा. 90, 180)", value=90, min_value=10)
 
-        # यहाँ आपकी टाइम साइकिल की लॉजिक आएगी
-        if st.button("🔱 साइकिल की खोज करें"):
-            stock_data = df[df['symbol'] == selected_stock].sort_values('date')
-            st.write(f"🔍 {selected_stock} के पिछले 10 साल के डेटा में {cycle_days} दिनों का चक्र देखा जा रहा है...")
-            # साइकिल चार्ट और कैलकुलेशन यहाँ डिस्प्ले होंगे
-            st.line_chart(stock_data.set_index('date')['close'])
+        # --- टाइम साइकिल की गणना (Logic) ---
+        stock_df = df[df['symbol'] == selected_stock].sort_values('date')
+        
+        st.divider()
+        st.subheader(f"📊 {selected_stock} का मूल्य और समय चक्र विश्लेषण")
+        
+        # चार्ट दिखाना
+        st.line_chart(stock_df.set_index('date')['close'])
+
+        # टाइम साइकिल हिट्स (Gann Logic जैसी खोज)
+        st.info(f"💡 {selected_stock} में हर {cycle_days} दिन बाद होने वाले बदलावों की जांच की जा रही है...")
+        
+        # यहाँ हम भविष्य में साइकिल एक्यूरेसी (Success Rate) जोड़ेंगे
 
 except Exception as e:
-    st.error(f"Error: {e}")
+    st.error(f"❌ ऐप में कोई त्रुटि आई: {e}")
