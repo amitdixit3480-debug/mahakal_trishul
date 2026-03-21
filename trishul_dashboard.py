@@ -3,17 +3,16 @@ import sqlite3
 import pandas as pd
 import glob
 
-# 1. पेज को चौड़ा (Wide) करना ताकि मैट्रिक्स अच्छी दिखे
-st.set_page_config(page_title="Mahakal Seasonal Matrix", layout="wide")
+st.set_page_config(page_title="Mahakal Matrix", layout="wide")
 
-# 2. डेटा लोड करने का मास्टर फंक्शन
 @st.cache_data
 def load_data():
     all_chunks = []
-    db_files = glob.glob("mahakal_part_*") # आपकी बिना .db वाली फाइलें
-    for file in db_files:
+    # आपकी बिना .db एक्सटेंशन वाली फाइलों के लिए
+    files = glob.glob("mahakal_part_*")
+    for f in files:
         try:
-            conn = sqlite3.connect(file)
+            conn = sqlite3.connect(f)
             df_p = pd.read_sql_query("SELECT symbol, date, close FROM stock_data", conn)
             conn.close()
             all_chunks.append(df_p)
@@ -27,54 +26,58 @@ df = load_data()
 
 st.title("🔱 Mahakal Seasonal Matrix Scanner")
 
-# --- UI: वही तारीखें जो आपको चाहिए थीं ---
+# डेटा लोड होने की पुष्टि
+if not df.empty:
+    st.sidebar.success(f"✅ {len(df['symbol'].unique())} स्टॉक्स लोड हुए")
+else:
+    st.error("❌ डेटा लोड नहीं हुआ। कृपया फाइल चेक करें।")
+
+# UI
 c1, c2, c3, c4 = st.columns(4)
 with c1: start_d = st.number_input("Start Day", 1, 31, 21)
 with c2: start_m = st.number_input("Start Month", 1, 12, 3)
 with c3: end_d = st.number_input("End Day", 1, 31, 21)
 with c4: end_m = st.number_input("End Month", 1, 12, 4)
 
-if st.button("🔱 महाकाल चक्र स्कैन करें"):
-    if df.empty:
-        st.error("डेटा नहीं मिला! कृपया फाइलें चेक करें।")
-    else:
-        results = []
-        symbols = df['symbol'].unique()
+if st.button("🔱 स्कैन शुरू करें"):
+    results = []
+    symbols = df['symbol'].unique()
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, sym in enumerate(symbols):
+        status_text.text(f"Scanning: {sym}")
+        s_df = df[df['symbol'] == sym].sort_values('date')
+        years = sorted(s_df['date'].dt.year.unique())
         
-        with st.spinner("⏳ इतिहास खंगाला जा रहा है..."):
-            for sym in symbols:
-                s_df = df[df['symbol'] == sym].sort_values('date')
-                years = sorted(s_df['date'].dt.year.unique())
-                row = {'Stock': sym}
-                pos, total = 0, 0
+        row = {'Stock': sym}
+        found_any = False
+        
+        for yr in years:
+            try:
+                d1 = pd.Timestamp(year=yr, month=start_m, day=start_d)
+                d2 = pd.Timestamp(year=yr, month=end_m, day=end_d)
+                period = s_df[(s_df['date'] >= d1) & (s_df['date'] <= d2)]
                 
-                for yr in years:
-                    try:
-                        d1 = pd.Timestamp(year=yr, month=start_m, day=start_d)
-                        d2 = pd.Timestamp(year=yr, month=end_m, day=end_d)
-                        period = s_df[(s_df['date'] >= d1) & (s_df['date'] <= d2)]
-                        if not period.empty:
-                            ret = ((period['close'].iloc[-1] - period['close'].iloc[0]) / period['close'].iloc[0]) * 100
-                            row[str(yr)] = round(ret, 2)
-                            if ret > 0: pos += 1
-                            total += 1
-                    except: continue
-                
-                if total > 0:
-                    row['Accuracy %'] = round((pos / total) * 100, 2)
-                    results.append(row)
+                if not period.empty:
+                    ret = ((period['close'].iloc[-1] - period['close'].iloc[0]) / period['close'].iloc[0]) * 100
+                    row[str(yr)] = round(ret, 2)
+                    found_any = True
+            except: continue
+        
+        if found_any:
+            results.append(row)
+        progress_bar.progress((i + 1) / len(symbols))
 
-        # मैट्रिक्स तैयार करना
+    if results:
+        status_text.text("✅ स्कैन पूरा हुआ!")
         matrix_df = pd.DataFrame(results)
-        years_cols = [c for c in matrix_df.columns if c.isdigit()]
-        cols = ['Stock', 'Accuracy %'] + years_cols
-        matrix_df = matrix_df[cols].sort_values('Accuracy %', ascending=False)
-
-        # 🎨 स्टाइलिंग (Green/Red bars जैसा लुक)
-        def color_bg(val):
-            if isinstance(val, (int, float)) and val != 0:
-                color = '#90EE90' if val > 0 else '#FFB6C1'
-                return f'background-color: {color}'
-            return ''
-
-        st.dataframe(matrix_df.style.applymap(color_bg, subset=years_cols), use_container_width=True, height=600)
+        # ईयर कॉलम्स को अरेंज करना
+        year_cols = sorted([c for c in matrix_df.columns if c.isdigit()])
+        matrix_df = matrix_df[['Stock'] + year_cols]
+        
+        # डायरेक्ट टेबल डिस्प्ले (ताकि रिस्पॉन्स दिखे)
+        st.dataframe(matrix_df, use_container_width=True)
+    else:
+        st.warning("इस तारीख के बीच कोई डेटा नहीं मिला।")
