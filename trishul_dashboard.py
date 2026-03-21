@@ -3,67 +3,75 @@ import sqlite3
 import pandas as pd
 import glob
 import os
-# 1. पेज सेटअप (Wide Layout)
-st.set_page_config(page_title="Mahakal Time Cycle", layout="wide")
 
-# 2. मल्टी-पार्ट डेटा लोड करने वाला फंक्शन
+# 1. पेज सेटअप
+st.set_page_config(page_title="Mahakal Time Cycle Scanner", layout="wide")
+
+# 2. मल्टी-पार्ट डेटा लोड करने वाला फंक्शन (बिना .db एक्सटेंशन के लिए अपडेटेड)
 @st.cache_data
 def load_combined_data():
     all_chunks = []
-    # आपके फोल्डर में जितनी भी 'mahakal_part_*.db' फाइलें हैं, सबको ढूंढना
-    db_files = glob.glob("mahakal_part_*.db")
+    # आपकी फ़ाइलों के नाम 'mahakal_part_1' हैं, इसलिए '*' का उपयोग किया है
+    db_files = glob.glob("mahakal_part_*")
     
     if not db_files:
-        st.error("❌ कोई डेटाबेस पार्ट (Part 1, 2...) नहीं मिला! कृपया GitHub पर फाइलें चेक करें।")
+        st.error("❌ कोई डेटाबेस पार्ट नहीं मिला! कृपया चेक करें कि फ़ाइलें GitHub पर हैं या नहीं।")
         return pd.DataFrame()
 
-    with st.spinner(f"⏳ {len(db_files)} डेटा पार्ट्स को महाकाल चक्र में जोड़ा जा रहा है..."):
-        for file in db_files:
-            try:
-                conn = sqlite3.connect(file)
-                # सिर्फ जरूरी कॉलम उठाना ताकि ऐप सुपर फ़ास्ट चले
-                df_part = pd.read_sql_query("SELECT symbol, date, close FROM stock_data", conn)
-                conn.close()
-                all_chunks.append(df_part)
-            except Exception as e:
-                st.warning(f"⚠️ {file} को पढ़ने में दिक्कत आई: {e}")
-        
-        # सभी पार्ट्स को एक साथ मिलाना
+    for file in db_files:
+        try:
+            # SQLite को बताना कि यह एक डेटाबेस फ़ाइल है भले ही .db न लिखा हो
+            conn = sqlite3.connect(file)
+            df_part = pd.read_sql_query("SELECT symbol, date, close FROM stock_data", conn)
+            conn.close()
+            all_chunks.append(df_part)
+        except Exception as e:
+            st.warning(f"⚠️ {file} को लोड करने में समस्या: {e}")
+    
+    if all_chunks:
         final_df = pd.concat(all_chunks, ignore_index=True)
         final_df['date'] = pd.to_datetime(final_df['date'])
         return final_df
+    return pd.DataFrame()
 
-# --- मुख्य प्रोग्राम शुरू ---
+# --- मुख्य इंटरफ़ेस ---
 try:
+    st.title("🔱 Mahakal Time Cycle & Seasonal Dashboard")
+    
     df = load_combined_data()
 
     if not df.empty:
-        st.title("🔱 Mahakal Time Cycle & Seasonal Scanner")
-        st.sidebar.success(f"✅ कुल {df['symbol'].nunique()} स्टॉक्स का डेटा तैयार है।")
-
-        # --- UI: स्टॉक सिलेक्शन और साइकिल सेटिंग ---
-        col1, col2, col3 = st.columns([2, 1, 1])
+        st.sidebar.success(f"✅ {len(df)} रो डेटा सफलतापूर्वक लोड हुआ")
         
+        # फिल्टर सेक्शन
+        col1, col2 = st.columns(2)
         with col1:
-            all_stocks = sorted(df['symbol'].unique())
-            selected_stock = st.selectbox("🎯 स्टॉक चुनें (Search here)", all_stocks)
+            stock_list = sorted(df['symbol'].unique())
+            selected_stock = st.selectbox("🎯 स्टॉक चुनें", stock_list)
         
         with col2:
-            cycle_days = st.number_input("⏳ टाइम साइकिल के दिन (उदा. 90, 180)", value=90, min_value=10)
+            cycle_days = st.number_input("⏳ टाइम साइकिल (दिनों में)", value=90, step=1)
 
-        # --- टाइम साइकिल की गणना (Logic) ---
+        # डेटा प्रोसेसिंग
         stock_df = df[df['symbol'] == selected_stock].sort_values('date')
         
-        st.divider()
-        st.subheader(f"📊 {selected_stock} का मूल्य और समय चक्र विश्लेषण")
-        
-        # चार्ट दिखाना
+        # चार्ट प्रदर्शन
+        st.subheader(f"📈 {selected_stock} का चार्ट और {cycle_days} दिनों का चक्र")
         st.line_chart(stock_df.set_index('date')['close'])
 
-        # टाइम साइकिल हिट्स (Gann Logic जैसी खोज)
-        st.info(f"💡 {selected_stock} में हर {cycle_days} दिन बाद होने वाले बदलावों की जांच की जा रही है...")
+        # --- टाइम साइकिल की खोज (Logic) ---
+        st.divider()
+        st.subheader("🔍 साइकिल विश्लेषण")
         
-        # यहाँ हम भविष्य में साइकिल एक्यूरेसी (Success Rate) जोड़ेंगे
+        # आखिरी क्लोजिंग और अगली संभावित साइकिल डेट
+        last_date = stock_df['date'].max()
+        next_cycle_date = last_date + pd.Timedelta(days=cycle_days)
+        
+        c1, c2 = st.columns(2)
+        c1.metric("आखिरी डेटा डेट", last_date.strftime('%d-%b-%Y'))
+        c2.metric("अगली संभावित साइकिल तिथि", next_cycle_date.strftime('%d-%b-%Y'))
+
+        st.info(f"🔱 टिप: {selected_stock} में हर {cycle_days} दिन बाद एक बड़ा मूवमेंट आने की संभावना रहती है।")
 
 except Exception as e:
-    st.error(f"❌ ऐप में कोई त्रुटि आई: {e}")
+    st.error(f"❌ ऐप चलाने में एरर आया: {e}")
